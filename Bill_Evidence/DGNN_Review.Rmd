@@ -1,0 +1,197 @@
+---
+title: "Alternative Data Set"
+author: "Bill"
+date: "10/03/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+```
+
+### 1 - Context
+
+Hi guys, thought I'd put together this quick markdown to share what I've found for our project so far. Apologies for the tardiness, I'm running about a week behind what would be a reasonable schedule!
+
+I went through the data sets in the review article Mo shared [1] with the aim of finding one which would better highlight the differences of the different weight adjustment methods. I thought this was worthwhile because the preliminary work on the KDD cup data set offered very poor comparability of the methods, the neural networks were 'too good'. Also, the KDD data is quite low dimensional and therefore using neural networks felt a bit moot. 
+
+### 2 - Alternative Data
+
+From the review [1] I found the pre-print [2] and it's corresponding data set on the IEEE-dataport [3]. Membership for the IEEE-dataport is free, and then you can simply download the data set. Alternatively, you can find the same data set on Kaggle [4].
+
+This data set contains 42,797 labelled instances of the first 100 API calls of malware running in a sandbox, and 1079 labelled instances of the API calls of non-malware. I had initially thought this was pre-processed in accordance with [2] but this isn't the case- I shall instead carry out my own pre-processing.
+
+### 3 - Potential NN Architectures
+
+I think this data set is a natural fit for two different types of NN architecture. The data has inherent time structure (the calls are in time sequence) and it therefore seems immediate that we should try an RNN. Secondly, and following the approach taken in [2], we can make graphs of the API call sequences and then try a convolutional architecture, following the "Deep Convolutional Graph NN" described in [5]. I give an overview of [5] in the final section of this document.
+
+### 4 - Preprocessing
+
+Download, unzip, and rename the data set (find it at either [3] or [4]). Change the path below to where you've saved it.
+
+```{r}
+path <- "/Users/billnunn/Desktop/API_Calls.csv"
+```
+
+We can now read in the data for preprocessing.
+
+```{r}
+df <- read.csv(path)
+```
+
+Let's carry out a couple of sanity checks. We view the head and verify that the final column contains the number in each class we expect.
+
+```{r}
+head(df[,1:5])
+```
+
+```{r}
+table(df[,102])
+```
+
+Great, things look as we expect and we're safe to throw away the first hash column.
+
+```{r}
+df <- df[,2:102]
+```
+
+We now find the number of distinct API calls. Since these will represent vertices in the corresponding graph this is what we name the variable.
+
+```{r}
+vertices <- 1:(apply(df, 1, max) %>% max)
+```
+
+#### 4.1 - RNN Preprocessing
+
+We follow the methodology given in [6] to preprocess our data.
+
+```{r}
+call_seq <- function(rown){
+  return(unlist(df[rown, ], use.names = FALSE))
+}
+```
+
+Let's test this function on the first row.
+
+```{r}
+call_seq(1)
+```
+
+#### 4.2 - DCGNN Preprocessing
+
+The approach for generating graphs from the API call sequences taken in [2] was simple. Each type of API call represents a node and nodes would be joined by an edge iff the calls were next to each other in the call sequence. We create a second dataframe which contains the edge set for each call sequence. We start by creating a list of left and right braces. 
+
+```{r}
+left_brace <- rep("[", nrow(df))
+right_brace <- rep("]", nrow(df))
+```
+
+Now we can define a function which takes an input column of our dataframe and returns a column of edges.
+
+```{r}
+edge_col <- function(coln){
+  return(paste(left_brace, sep = "", df[,coln]) %>%
+         paste(sep = ",", df[,coln + 1]) %>%
+         paste(sep = "", right_brace))
+}
+```
+
+Let's test our function on the first column.
+
+```{r}
+head(edge_col(1))
+```
+
+This looks fine. We now produce a dataframe of the edges for the each of the call sequences.
+
+```{r}
+edge_frame <- df[,101]
+
+for(i in 1:99){
+  edge_frame <- cbind(edge_frame, edge_col(i))
+}
+
+head(edge_frame[,1:5])
+```
+
+```{r}
+rm(i, left_brace, right_brace)
+```
+
+In effect each row of `edge_frame` is a sparse storage of the API call graph, where the unique edges of the first API call sequence are given by:
+
+```{r}
+unique(edge_frame[1,2:100])
+```
+
+In the interest of time we preprocess according to [7]. 
+
+### 5 - Overview of DCGNN Architecture
+
+I give an overview of DCGNN, as outlined in [5], and will have similar discussion in the actual report.
+
+The method detailed in [5] is surprising: it acts on graphs directly; the graphs aren't required to have the same number of nodes; the nodes themselves don't even need to be labeled. Furthermore, the whole network can be fitted with backpropagation alone. Earlier neural network methods for graph classification (PATCHY-SAN) were reliant on heavy preprocessing of data, and the correct preprocessing could not be learned via direct backpropagation of the final output. The suggestion for why such an improbable sounding method is effective is that we implicitly apply a graph kernel similar to the Weisfeiler-Lehman kernel [NOTE FOR BILL].
+
+#### 5.1 - Stages of the Architecture
+
+The network splits into three main parts:
+
+* The convolutional layers.
+* The sort pooling layer.
+* The remaining layers.
+
+I devote a subsection to each of these parts of the network.
+
+#### 5.2 Convolution Layers
+
+Let $G$ be a graph with $n$ vertices. 
+
+Let's suppose we choose to have $h$ convolution layers indexed by $t$, which output an $n$ rowed matrix $Z^t$, where we want the $i$th rows of our $Z$ matrices to give information about the 'structural role' of vertex $i$. We define $Z^0$ to be a special matrix $X$ which has dimension $n$ by $c_0$. In the case where we have labeled vertices we can let $X$ be the one hot encoding of the vertices i.e. the $n$ by $n$ identity matrix. In the case where the nodes are unlabeled we can also make a sensible choice for $X$, the column vector of normalised node degrees is suggested in [5].
+
+From here the convolution step takes the following form:
+
+$$Z^{t+1} = f(\tilde D^{-1} \tilde A Z^{t}W^{t})$$
+Where $W$ is the $c_t$ by $c_{t+1}$ matrix whose columns are the filter weights (in the usual CNN sense) for a given filter. The matrix $\tilde A$ is the $A+I$ where $A$ is the adjacency matrix, and $\tilde D$ is the degree matrix of the extended adjacency matrix $\tilde A$. We note that the application of $\tilde D^{-1}$ is to normalise the result of applying $\tilde A$. Finally $f$ is our non-linear activation function applied to the matrix point wise. Since $Z^0$ is $n$ by $c_0$ and $W^0$ is $c_0$ by $c_1$ it follows that $Z^1$ is $n$ by $c_1$. And similarly $Z^t$ is $n$ by $c_t$ using induction. Now matrix $Z_t$ really just stores the outcome of applying $c_t$ convolutional filters on the outputs of the previous time step's filters, where only filter outputs of adjacent nodes are mixed in accordance with $\tilde A$.
+
+(Diagram necessary for final report- the one in paper is absolute shite)
+
+As is usual in CNNs the outputs of the $h$ convolution layers are gathered up- we simply column bind matrices $Z^1, Z^2,..., Z^h$ to get matrix $Z^{1:h}$ which is clearly $n$ by $\sum^{h}_{t=1} c_t$. Each row of $Z^{1:h}$ contains deep structural information about its corresponding node, and hopefully useful information once we've trained the filter weights! The following lemma (of mine) illustrates this fact somewhat- realising it helped the above methodology *click* into place.
+
+Lemma: Let $G$ be a graph with a non-trivial graph automorphism. The rows of $Z^{1:h}$ corresponding to automorphic nodes are identical.
+
+This observation leads us nicely onto the pooling step of our network.
+
+#### 5.3 Sort Pooling Layers
+
+In the case where the nodes don't have a natural order (i.e they're unlabeled) we use the structural insight the convolution steps have granted us to order the nodes in a consistent way before passing to the next step of the network, we call this process sort pooling.
+
+If necessary we add empty rows to $Z^{1:h}$ until it has $k$ rows, so that all every graph's $Z^{1:h}$ matrix is the same size. We order each row by right to left lexicographical ordering and call the resulting matrix $Z^{sp}$ and we've finished the sort pooling. In order to backpropagate through the convolution layers we must keep track of how the rows were re-ordered!
+
+#### 5.4 Remaining Layers
+
+We turn the matrix $Z^{sp}$ into a vector and feed into whatever standard neural network architecture we fancy. This makes up the remaining layers.
+
+### Sources
+
+[1] https://arxiv.org/abs/2107.01185 
+
+[2] https://www.techrxiv.org/articles/preprint/Behavioral_Malware_Detection_Using_Deep_Graph_Convolutional_Neural_Networks/10043099/1
+
+[3] https://ieee-dataport.org/open-access/malware-analysis-datasets-api-call-sequences 
+
+[4] https://www.kaggle.com/ang3loliveira/malware-analysis-datasets-api-call-sequences 
+
+[5] https://muhanzhang.github.io/papers/AAAI_2018_DGCNN.pdf
+
+[6] https://towardsdatascience.com/recurrent-neural-networks-by-example-in-python-ffd204f99470
+
+[7] https://stellargraph.readthedocs.io/en/stable/demos/graph-classification/dgcnn-graph-classification.html
+
+[NOTE FOR BILL] Save the discussion of graph kernels for reflection. https://davidbieber.com/post/2019-05-10-weisfeiler-lehman-isomorphism-test/
+https://www.jmlr.org/papers/volume12/shervashidze11a/shervashidze11a.pdf
+
+See muhanzhang on github for more stuff on DCGNN 
