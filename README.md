@@ -8,7 +8,7 @@ Neural Networks.
 * Mo
 * Oliver
 
-With -- equity.
+With equal equity.
 
 ## Reading Order
 
@@ -21,7 +21,7 @@ Our report should be read in the following order:
 * 01
 * 02
 * 03
-* 04
+* 04 - Alternative Architectures
 * 05
 
 ## Requirements
