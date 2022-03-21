@@ -23,7 +23,7 @@ Our report should be read in the following order:
 * 03 - SGD Optimiser
 * 04 - 
 * 05.1 - NAG Optimiser
-* 05.2 - SGD Optimiser with Momentum
+* 05.2 - SGD Optimiser (Momentum)
 * 05.3 - ADAM Optimiser
 * 06 - Comparison of Best Performers
 * 07 - Alternative Architectures
