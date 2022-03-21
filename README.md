@@ -21,7 +21,8 @@ Our report should be read in the following order:
 * 01 - Introduction
 * 02 - Data Setup
 * 03 - SGD Optimiser
-* 04 - 
+* 04.1 - Depth Investigation
+* 04.2 - Width Investigation
 * 05.1 - NAG Optimiser
 * 05.2 - SGD Optimiser (Momentum)
 * 05.3 - ADAM Optimiser
